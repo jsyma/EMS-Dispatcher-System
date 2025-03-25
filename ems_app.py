@@ -1,107 +1,227 @@
+import re
 import requests
 import urllib.parse
-
-from flask import Flask, request
+from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import func
 
-class EMS_Server():
-    def __init__(self):
-        self.emsApp = Flask(__name__)
-        self.emsApp.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///ems.db'
-        self.emsApp.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-        self.database = SQLAlchemy(self.emsApp)
+# Mapbox API For Routing
+MAPBOX_ACCESS_TOKEN = "pk.eyJ1Ijoiam9zaHVhdG11IiwiYSI6ImNtODIxZWx3ejBwamMyaXBpZDVkZ3Y5YXMifQ.n0rtPaR1apUFhruHZA9ggA"
 
-        self.map = Map(self)
+app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///ems.db'
+db = SQLAlchemy(app)
 
-class MessageHandler():
-    def __init__(self): #@TODO
-        pass
+class DispatchMessage(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    message = db.Column(db.Text, nullable=False)
+    incident_location = db.Column(db.String(200), nullable=False)
+    severity = db.Column(db.String(50), default='Normal')
+    timestamp = db.Column(db.DateTime, default=func.now())
 
-class Dispatcher():
-    def __init__(self, server:EMS_Server): #@TODO
-        self.server = server
-        pass
+class Ambulance(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    identifier = db.Column(db.String(50), unique=True, nullable=False)
+    status = db.Column(db.Boolean, nullable=False)
+    current_location = db.Column(db.String(200))
+    last_updated = db.Column(db.DateTime, default=func.now())
 
-    def kill_server(self):
-        '''
-        Kills the primary server when called 
-        '''
-        foo = request.environ.get('werkzeug.server.shutdown')
-        if foo is None:
-            raise RuntimeError("Shutdown failure")
-        foo()
+class Hospital(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    address = db.Column(db.String(200), nullable=False)
+    available_beds = db.Column(db.Integer, default=0)
+    last_updated = db.Column(db.DateTime, default=func.now())
 
-        @self.server.route('/shutdown', methods=['POST'])
-        def shutdown():
-            self.shutdown_server()
-            return 'Server shutting down...'
+with app.app_context():
+    db.create_all()
+    # Add Sample Hospitals
+    if not Hospital.query.first():
+        mountSinai = Hospital(name="Mount Sinai Hospital", address="600 University Ave, Toronto", available_beds=100)
+        sunnybrook = Hospital(name="Sunnybrook Health Sciences Centre", address="2075 Bayview Ave, Toronto", available_beds=0)
+        torontoGeneral = Hospital(name="Toronto General Hospital", address="200 Elizabeth St, Toronto", available_beds=5)
+        stMichaels = Hospital(name="St. Michael's Hospital", address="30 Bond St, Toronto", available_beds=5)
+        humberRiver = Hospital(name="Humber River Hospital", address="1235 Wilson Ave, North York", available_beds=5)
+        northYorkGeneral = Hospital(name="North York General Hospital", address="4001 Leslie St, North York", available_beds=5)
+        sickKids = Hospital(name="The Hospital for Sick Children", address="555 University Ave, Toronto", available_beds=5)
+        db.session.add_all([mountSinai, sunnybrook, torontoGeneral, stMichaels, humberRiver, northYorkGeneral, sickKids])
+        db.session.commit()
+    # Add Sample Ambulances 
+    if not Ambulance.query.first():
+        ambulance1 = Ambulance(identifier="Ambulance 1", status=True, current_location="58 Richmond St E, Toronto")
+        ambulance2 = Ambulance(identifier="Ambulance 2", status=True, current_location="135 Davenport Rd, Toronto")
+        ambulance3 = Ambulance(identifier="Ambulance 3", status=False, current_location="135 Davenport Rd, Toronto")
+        ambulance4 = Ambulance(identifier="Ambulance 4", status=True, current_location="12 Canterbury Pl, North York")
+        ambulance5 = Ambulance(identifier="Ambulance 5", status=True, current_location="3300 Bayview Ave, North York")
+        db.session.add_all([ambulance1, ambulance2, ambulance3, ambulance4, ambulance5])
+        db.session.commit()
 
-from abc import ABC, abstractmethod 
-class EMSObject(ABC):
-    '''
-    An abstract class for objects of interest within the EMS program 
-    '''
-    def __init__(self):
-        pass
+def get_coordinates(address):
+    encoded_address = urllib.parse.quote(address)
+    url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{encoded_address}.json?access_token={MAPBOX_ACCESS_TOKEN}"
+    response = requests.get(url)
+    if response.status_code == 200:
+        data = response.json()
+        features = data.get('features', [])
+        if features:
+            coordinates = features[0]['geometry']['coordinates']
+            return (coordinates[1], coordinates[0])
+    return None
 
-    @abstractmethod
-    def update(): #@TODO
-        pass
+def get_directions(origin_coordinates, destination_coordinates, mode='driving'):
+    origin_coordinates_str = f"{origin_coordinates[1]},{origin_coordinates[0]}"
+    destination_coordinates_str = f"{destination_coordinates[1]},{destination_coordinates[0]}"
+    url = f"https://api.mapbox.com/directions/v5/mapbox/{mode}/{origin_coordinates_str};{destination_coordinates_str}?geometries=geojson&steps=true&access_token={MAPBOX_ACCESS_TOKEN}&overview=full"
+    response = requests.get(url)
+    if response.status_code == 200:
+        data = response.json()
+        routes = data.get('routes', [])
+        if routes:
+            route = routes[0]
+            leg = route.get('legs', [])[0]
+            steps = []
+            for step in leg.get('steps', []):
+                instruction = step.get('maneuver', {}).get('instruction', '')
+                instruction = re.sub('<.*?>', '', instruction)
+                steps.append(instruction)
+            route_info = {
+                'distance': {
+                    'text': f"{route.get('distance', 0)/1000:.2f} km",
+                    'value': route.get('distance', 0)
+                },
+                'duration': {
+                    'text': f"{int(route.get('duration', 0)//60)} min {int(route.get('duration', 0)%60)} sec",
+                    'value': route.get('duration', 0)
+                },
+                'steps': steps
+            }
+            return route_info
+    return None
 
-class Hospital(EMSObject):
-    def __init__(self): 
-        super().__init__()
-        #@TODO
-    
-    def update(): #TODO
-        pass
+def get_best_hospital(incident_coordinates, hospitals):
+    best_hospital = None
+    best_duration = None
+    for hospital in hospitals:
+        if hospital.available_beds <= 0:
+            continue
+        hospital_coordinates = get_coordinates(hospital.address)
+        route_info = get_directions(incident_coordinates, hospital_coordinates, mode='driving')
+        if route_info and 'duration' in route_info:
+            duration = route_info['duration']['value']
+            if best_duration is None or duration < best_duration:
+                best_duration = duration
+                best_hospital = hospital
+    return best_hospital, best_duration
 
-class Operator(EMSObject):
-    def __init__(self): 
-        super().__init__()
-        #@TODO
-    
-    def update(): #TODO
-        pass
+# Endpoints
+@app.route('/')
+def home():
+    return "EMS Dispatcher Server is Running..."
 
-class Ambulance(EMSObject):
-    def __init__(self): 
-        super().__init__()
-        #@TODO
-    
-    def update(): #TODO
-        pass
+@app.route('/dispatch', methods=['POST'])
+def create_dispatch():
+    data = request.get_json()
+    message = data.get('message')
+    incident_location = data.get('incident_location')
+    severity = data.get('severity', 'Normal')
+    if not all([message, incident_location]):
+        return jsonify({'error': 'Missing Required Fields'}), 400
+    dispatch_message = DispatchMessage(
+        message=message,
+        incident_location=incident_location,
+        severity=severity
+    )
+    db.session.add(dispatch_message)
+    db.session.commit()
+    return jsonify({'message': 'Dispatch Message Created Successfully'}), 201
 
+@app.route('/dispatches', methods=['GET'])
+def get_dispatches():
+    dispatchMessages = DispatchMessage.query.order_by(DispatchMessage.timestamp.desc()).all()
+    allDispatches = []
+    for dispatchMessage in dispatchMessages:
+        allDispatches.append({
+            'id': dispatchMessage.id,
+            'message': dispatchMessage.message,
+            'incident_location': dispatchMessage.incident_location,
+            'severity': dispatchMessage.severity,
+            'timestamp': dispatchMessage.timestamp.strftime('%Y-%m-%d %H:%M:%S')
+        })
+    return jsonify(allDispatches), 200
 
-class Map():
-    ''''
-    Class to interact with the MAPBOX API
-    Will contain useful map-related functions
-    '''
-    def __init__(self, app:EMS_Server):
-       self.app = app
-       self.TOKEN = "pk.eyJ1Ijoiam9zaHVhdG11IiwiYSI6ImNtODIxZWx3ejBwamMyaXBpZDVkZ3Y5YXMifQ.n0rtPaR1apUFhruHZA9ggA"
-    
-    def get_coordinates(self, address) -> tuple:
-        """
-        Attemps to fetch the coordiates of a given address as a pair of x,y corrdinates
-        """
-        encoded_addr:str = urllib.parse.quote(address)
-        token:str = self.TOKEN
+@app.route('/ambulances', methods=['GET'])
+def get_ambulances():
+    ambulances = Ambulance.query.all()
+    allAmbulances = []
+    for ambulance in ambulances:
+        allAmbulances.append({
+            'id': ambulance.id,
+            'identifier': ambulance.identifier,
+            'status': ambulance.status,
+            'current_location': ambulance.current_location,
+            'last_updated': ambulance.last_updated.strftime('%Y-%m-%d %H:%M:%S')
+        })
+    return jsonify(allAmbulances), 200
 
-        url:str = "https://api.mapbox.com/geocoding/v5/mapbox.places/" + encoded_addr + ".json?access_token=" + token 
-        response = requests.get(url)
+@app.route('/hospitals', methods=['GET'])
+def get_hospitals():
+    hospitals = Hospital.query.all()
+    allHospitals = []
+    for hospital in hospitals:
+        allHospitals.append({
+            'id': hospital.id,
+            'name': hospital.name,
+            'address': hospital.address,
+            'available_beds': hospital.available_beds,
+            'last_updated': hospital.last_updated.strftime('%Y-%m-%d %H:%M:%S')
+        }) 
+    return jsonify(allHospitals), 200
 
-        if response.status_code == 200: # sucess
-            data = response.json()
-            features = data.get('features', [])
-            if features:
-                coords = features[0]['geometry']['coordinates']
-                return (coords[1], coords[0])
-        self.app.logger.error("Failed to geocode address: %s", address)
-        return None
-    
-    def get_directions(self, start_pos: tuple, end_pos:tuple) -> dict:
-        #@TODO
-        pass
-    
+@app.route('/route', methods=['POST'])
+def get_route():
+    data = request.get_json()
+    origin = data.get('origin')
+    destination = data.get('destination')
+    mode = data.get('mode', 'driving')
+    origin_coordinates = get_coordinates(origin)
+    destination_coordinates = get_coordinates(destination)
+    if not origin_coordinates or not destination_coordinates:
+        return jsonify({'error': 'Unable to Retrieve Coordinates'}), 400
+    route_info = get_directions(origin_coordinates, destination_coordinates, mode)
+    if route_info:
+        route_info['origin'] = origin
+        route_info['destination'] = destination
+        return jsonify(route_info), 200
+
+@app.route('/suggest_hospital', methods=['POST'])
+def suggest_hospital():
+    data = request.get_json()
+    incident_location = data.get('incident_location')
+    incident_coordinates = get_coordinates(incident_location)
+    if not incident_coordinates:
+        return jsonify({'error': 'Unable to Retrieve Incident Location'}), 400
+    hospitals = Hospital.query.all()
+    best_hospital, best_duration = get_best_hospital(incident_coordinates, hospitals)
+    minutes = int(best_duration // 60)
+    seconds = int(best_duration % 60)
+    return jsonify({
+        'hospital_id': best_hospital.id,
+        'name': best_hospital.name,
+        'address': best_hospital.address,
+        'available_beds': best_hospital.available_beds,
+        'estimated_travel_time': f"{minutes} min {seconds} sec"
+    }), 200
+
+def shutdown_server():
+    func = request.environ.get('werkzeug.server.shutdown')
+    if func is None:
+        raise RuntimeError('Not running with the Werkzeug Server')
+    func()
+
+@app.route('/shutdown', methods=['POST'])
+def shutdown():
+    shutdown_server()
+    return 'Server shutting down...'
+
+if __name__ == '__main__':
+    app.run(debug=True, use_reloader=False)
