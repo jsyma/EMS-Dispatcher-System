@@ -8,20 +8,37 @@ def send_dispatch():
     message = message_text_entry.get()
     incident_location = incident_location_entry.get()
     severity = severity_var.get()
+    
     if not message or not incident_location:
         messagebox.showerror("Error", "Please Fill in All Fields")
         return
+
     data = {
         'message': message,
         'incident_location': incident_location,
         'severity': severity
     }
+    
     response = requests.post(f"{API_URL}/dispatch", json=data)
-    if response.status_code == 201:
-        messagebox.showinfo("Success", "Dispatch Message Sent!")
-        message_text_entry.delete(0, tk.END)
-        incident_location_entry.delete(0, tk.END)
-        refresh_dispatches()
+
+    try:
+        result = response.json()  # Convert response to JSON
+        print("DEBUG: Dispatch Response:", result)  # Print the response to debug
+
+        ambulance = result.get('ambulance', 'Unknown')
+        
+        if response.status_code == 201:
+            messagebox.showinfo("Success", f"Dispatch Message Sent!\nDispatched Ambulance: {ambulance}")
+            message_text_entry.delete(0, tk.END)
+            incident_location_entry.delete(0, tk.END)
+            refresh_dispatches()
+        else:
+            messagebox.showerror("Error", result.get('error', 'Unknown Error'))
+
+    except requests.exceptions.JSONDecodeError:
+        print("ERROR: Response is not valid JSON")
+        print("DEBUG: Raw Response Content:", response.text)
+        messagebox.showerror("Error", "Invalid response from server")
 
 def refresh_dispatches():
     response = requests.get(f"{API_URL}/dispatches")
@@ -29,8 +46,9 @@ def refresh_dispatches():
         dispatches = response.json()
         dispatch_listbox.delete(0, tk.END)
         for d in dispatches:
-            display_text = f"[{d['timestamp']}] - {d['message']} at {d['incident_location']} - Severity: {d['severity']}"
+            display_text = (f"[{d['timestamp']}] - {d.get('ambulance', 'Unknown')} dispatched at {d['incident_location']} for {d['message']} - Severity: {d['severity']}")
             dispatch_listbox.insert(tk.END, display_text)
+            print("DEBUG: Dispatches API Response:", dispatches)
 
 def calculate_route():
     origin = origin_entry.get()

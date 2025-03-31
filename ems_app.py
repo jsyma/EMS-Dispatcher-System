@@ -4,6 +4,7 @@ import urllib.parse
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func
+from math import radians, cos, sin, sqrt, atan2
 
 # Mapbox API For Routing
 MAPBOX_ACCESS_TOKEN = "pk.eyJ1Ijoiam9zaHVhdG11IiwiYSI6ImNtODIxZWx3ejBwamMyaXBpZDVkZ3Y5YXMifQ.n0rtPaR1apUFhruHZA9ggA"
@@ -17,6 +18,7 @@ class DispatchMessage(db.Model):
     message = db.Column(db.Text, nullable=False)
     incident_location = db.Column(db.String(200), nullable=False)
     severity = db.Column(db.String(50), default='Normal')
+    ambulance_id = db.Column(db.String(50), nullable=True)
     timestamp = db.Column(db.DateTime, default=func.now())
 
 class Ambulance(db.Model):
@@ -113,6 +115,18 @@ def get_best_hospital(incident_coordinates, hospitals):
                 best_hospital = hospital
     return best_hospital, best_duration
 
+def calculate_distance(coord1, coord2):
+    """Calculate the distance between two coordinates using the Haversine formula."""
+    R = 6371  # Radius of Earth in kilometers
+    lat1, lon1 = radians(coord1[0]), radians(coord1[1])
+    lat2, lon2 = radians(coord2[0]), radians(coord2[1])
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+
+    a = sin(dlat / 2)**2 + cos(lat1) * cos(lat2) * sin(dlon / 2)**2
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
+    return R * c
+
 # Endpoints
 @app.route('/')
 def home():
@@ -120,20 +134,64 @@ def home():
 
 @app.route('/dispatch', methods=['POST'])
 def create_dispatch():
-    data = request.get_json()
-    message = data.get('message')
-    incident_location = data.get('incident_location')
-    severity = data.get('severity', 'Normal')
-    if not all([message, incident_location]):
-        return jsonify({'error': 'Missing Required Fields'}), 400
-    dispatch_message = DispatchMessage(
-        message=message,
-        incident_location=incident_location,
-        severity=severity
-    )
-    db.session.add(dispatch_message)
-    db.session.commit()
-    return jsonify({'message': 'Dispatch Message Created Successfully'}), 201
+    try:
+        data = request.get_json()
+        message = data.get('message')
+        incident_location = data.get('incident_location')
+        severity = data.get('severity', 'Normal')
+
+        if not all([message, incident_location]):
+            return jsonify({'error': 'Missing Required Fields'}), 400
+
+        # Get incident coordinates
+        incident_coordinates = get_coordinates(incident_location)
+        if not incident_coordinates:
+            return jsonify({'error': 'Unable to Retrieve Incident Location Coordinates'}), 400
+
+        # Find all available ambulances
+        available_ambulances = Ambulance.query.filter_by(status=True).all()
+        if not available_ambulances:
+            return jsonify({'error': 'No Available Ambulances'}), 400
+
+        # Find the closest ambulance
+        closest_ambulance = None
+        shortest_distance = float('inf')
+        for ambulance in available_ambulances:
+            ambulance_coordinates = get_coordinates(ambulance.current_location)
+            if ambulance_coordinates:
+                distance = calculate_distance(incident_coordinates, ambulance_coordinates)
+                print(f"Ambulance {ambulance.identifier} Distance: {distance}")
+                if distance < shortest_distance:
+                    shortest_distance = distance
+                    closest_ambulance = ambulance
+
+        if not closest_ambulance:
+            return jsonify({'error': 'No Ambulances with Valid Locations'}), 400
+
+        # Update ambulance status
+        closest_ambulance.status = False
+        closest_ambulance.current_location = incident_location
+        db.session.commit()
+
+        # Create dispatch message
+        dispatch_message = DispatchMessage(
+            message=message,
+            incident_location=incident_location,
+            severity=severity,
+            ambulance_id=closest_ambulance.identifier
+        )
+        db.session.add(dispatch_message)
+        db.session.commit()
+
+        return jsonify({
+            'message': 'Dispatch Message Created Successfully',
+            'ambulance': closest_ambulance.identifier
+        }), 201
+
+    except Exception as e:
+        print(f"Error in create_dispatch: {e}")
+        return jsonify({'error': 'Internal Server Error'}), 500
+
 
 @app.route('/dispatches', methods=['GET'])
 def get_dispatches():
@@ -145,7 +203,8 @@ def get_dispatches():
             'message': dispatchMessage.message,
             'incident_location': dispatchMessage.incident_location,
             'severity': dispatchMessage.severity,
-            'timestamp': dispatchMessage.timestamp.strftime('%Y-%m-%d %H:%M:%S')
+            'timestamp': dispatchMessage.timestamp.strftime('%Y-%m-%d %H:%M:%S'),
+            "ambulance": dispatchMessage.ambulance_id
         })
     return jsonify(allDispatches), 200
 
@@ -211,6 +270,17 @@ def suggest_hospital():
         'available_beds': best_hospital.available_beds,
         'estimated_travel_time': f"{minutes} min {seconds} sec"
     }), 200
+    
+@app.route('/debug/ambulances', methods=['GET'])
+def debug_ambulances():
+    ambulances = Ambulance.query.all()
+    return jsonify([{
+        'id': amb.id,
+        'identifier': amb.identifier,
+        'status': amb.status,
+        'current_location': amb.current_location
+    } for amb in ambulances])
+
 
 def shutdown_server():
     func = request.environ.get('werkzeug.server.shutdown')
