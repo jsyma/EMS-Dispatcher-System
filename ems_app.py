@@ -39,7 +39,7 @@ class Hospital(db.Model):
     last_updated = db.Column(db.DateTime, default=func.now())
 
 
-class ems_app:
+class ems_app():
     def __init__(self):
         pass
 

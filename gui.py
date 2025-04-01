@@ -5,7 +5,7 @@ import requests
 API_URL = 'http://127.0.0.1:5000'
 
 
-class ems_gui:
+class ems_gui():
     def __init__(self):
         pass
 
