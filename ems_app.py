@@ -69,7 +69,8 @@ class ems_app():
                 leg = route.get('legs', [])[0]
                 steps = []
                 for step in leg.get('steps', []):
-                    instruction = step.get('maneuver', {}).get('instruction', '')
+                    instruction = step.get(
+                        'maneuver', {}).get('instruction', '')
                     instruction = re.sub('<.*?>', '', instruction)
                     steps.append(instruction)
                 route_info = {
@@ -93,7 +94,8 @@ class ems_app():
             if hospital.available_beds <= 0:
                 continue
             hospital_coordinates = self.get_coordinates(hospital.address)
-            route_info = self.get_directions(incident_coordinates, hospital_coordinates, mode='driving')
+            route_info = self.get_directions(
+                incident_coordinates, hospital_coordinates, mode='driving')
             if route_info and 'duration' in route_info:
                 duration = route_info['duration']['value']
                 if best_duration is None or duration < best_duration:
@@ -210,10 +212,13 @@ class ems_app():
             closest_ambulance = None
             shortest_distance = float('inf')
             for ambulance in available_ambulances:
-                ambulance_coordinates = self.get_coordinates(ambulance.current_location)
+                ambulance_coordinates = self.get_coordinates(
+                    ambulance.current_location)
                 if ambulance_coordinates:
-                    distance = self.calculate_distance(incident_coordinates, ambulance_coordinates)
-                    print(f"Ambulance {ambulance.identifier} Distance: {distance}")
+                    distance = self.calculate_distance(
+                        incident_coordinates, ambulance_coordinates)
+                    print(
+                        f"Ambulance {ambulance.identifier} Distance: {distance}")
                     if distance < shortest_distance:
                         shortest_distance = distance
                         closest_ambulance = ambulance
@@ -246,7 +251,8 @@ class ems_app():
             return jsonify({'error': 'Internal Server Error'}), 500
 
     def get_dispatches(self):
-        dispatchMessages = DispatchMessage.query.order_by(DispatchMessage.timestamp.desc()).all()
+        dispatchMessages = DispatchMessage.query.order_by(
+            DispatchMessage.timestamp.desc()).all()
         allDispatches = []
         for dispatchMessage in dispatchMessages:
             allDispatches.append({
@@ -281,7 +287,8 @@ class ems_app():
         destination_coordinates = self.get_coordinates(destination)
         if not origin_coordinates or not destination_coordinates:
             return jsonify({'error': 'Unable to Retrieve Coordinates'}), 400
-        route_info = self.get_directions(origin_coordinates, destination_coordinates, mode)
+        route_info = self.get_directions(
+            origin_coordinates, destination_coordinates, mode)
         if route_info:
             route_info['origin'] = origin
             route_info['destination'] = destination
@@ -295,7 +302,8 @@ class ems_app():
         if not incident_coordinates:
             return jsonify({'error': 'Unable to Retrieve Incident Location'}), 400
         hospitals = Hospital.query.all()
-        best_hospital, best_duration = self.get_best_hospital(incident_coordinates, hospitals)
+        best_hospital, best_duration = self.get_best_hospital(
+            incident_coordinates, hospitals)
         if best_hospital is None:
             return jsonify({'error': 'No hospital available'}), 400
         minutes = int(best_duration // 60)
@@ -318,10 +326,9 @@ class ems_app():
         } for amb in ambulances])
 
 
-# Create an instance of our EMS app logic
 ems = ems_app()
 
-# Define the Flask endpoints as standalone functions
+
 @app.route('/')
 def home():
     return "EMS Dispatcher Server is Running..."
@@ -382,7 +389,6 @@ def shutdown():
 
 
 if __name__ == '__main__':
-    # Ensure the app context is active for initializing the database and sample data
     with app.app_context():
         ems.startEMS()
     app.run(debug=True, use_reloader=False)
