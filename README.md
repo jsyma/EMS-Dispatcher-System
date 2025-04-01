@@ -37,5 +37,4 @@ python gui.py
 A brief explanation of the key files/folders:
 - `ems_app.py` - Main application logic
 - `gui.py` - Graphical user interface for the application
-- `instance` - Database where the dispatch message gets saved
 
