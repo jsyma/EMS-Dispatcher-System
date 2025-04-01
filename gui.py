@@ -23,8 +23,6 @@ def send_dispatch():
 
     try:
         result = response.json()  # Convert response to JSON
-        print("DEBUG: Dispatch Response:", result)  # Print the response to debug
-
         ambulance = result.get('ambulance', 'Unknown')
         
         if response.status_code == 201:
@@ -37,7 +35,6 @@ def send_dispatch():
 
     except requests.exceptions.JSONDecodeError:
         print("ERROR: Response is not valid JSON")
-        print("DEBUG: Raw Response Content:", response.text)
         messagebox.showerror("Error", "Invalid response from server")
 
 def refresh_dispatches():
@@ -48,7 +45,6 @@ def refresh_dispatches():
         for d in dispatches:
             display_text = (f"[{d['timestamp']}] - {d.get('ambulance', 'Unknown')} dispatched at {d['incident_location']} for {d['message']} - Severity: {d['severity']}")
             dispatch_listbox.insert(tk.END, display_text)
-            print("DEBUG: Dispatches API Response:", dispatches)
 
 def calculate_route():
     origin = origin_entry.get()

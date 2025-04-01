@@ -116,7 +116,6 @@ def get_best_hospital(incident_coordinates, hospitals):
     return best_hospital, best_duration
 
 def calculate_distance(coord1, coord2):
-    """Calculate the distance between two coordinates using the Haversine formula."""
     R = 6371  # Radius of Earth in kilometers
     lat1, lon1 = radians(coord1[0]), radians(coord1[1])
     lat2, lon2 = radians(coord2[0]), radians(coord2[1])
