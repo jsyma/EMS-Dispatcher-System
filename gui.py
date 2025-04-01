@@ -9,7 +9,7 @@ class ems_gui:
     def __init__(self):
         pass
 
-    def send_dispatch(self, message_text_entry, incident_location_entry, severity_var):
+    def send_dispatch(self, message_text_entry, incident_location_entry, severity_var, dispatch_listbox):
         message = message_text_entry.get()
         incident_location = incident_location_entry.get()
         severity = severity_var.get()
@@ -35,7 +35,7 @@ class ems_gui:
                     "Success", f"Dispatch Message Sent!\nDispatched Ambulance: {ambulance}")
                 message_text_entry.delete(0, tk.END)
                 incident_location_entry.delete(0, tk.END)
-                self.refresh_dispatches()
+                self.refresh_dispatches(dispatch_listbox)
             else:
                 messagebox.showerror(
                     "Error", result.get('error', 'Unknown Error'))
@@ -143,7 +143,7 @@ class ems_gui:
         severity_combo.grid(row=2, column=1, sticky=tk.W, pady=5)
 
         send_button = ttk.Button(
-            input_frame, text="Send Dispatch", command=lambda: self.send_dispatch(message_text_entry, incident_location_entry, severity_var))
+            input_frame, text="Send Dispatch", command=lambda: self.send_dispatch(message_text_entry, incident_location_entry, severity_var, dispatch_listbox))
         send_button.grid(row=3, column=1, sticky=tk.W, pady=10)
         refresh_button = ttk.Button(
             input_frame, text="Refresh Dispatches", command=lambda: self.refresh_dispatches(dispatch_listbox))
